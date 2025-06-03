@@ -3,6 +3,8 @@
 import os
 import sys
 import django
+from pathlib import Path
+from aiogram.types import FSInputFile
 
 # 1) Добавляем в PYTHONPATH корень проекта (/home/Dev/AICoachAssistant),
 #    чтобы Python нашёл пакет AICoachAssistant и приложение CoachAsistant.
@@ -24,7 +26,7 @@ from CoachAsistant.servises import (
     OpenAIThreadService,
     TelegramUserService,
 )
-from CoachAsistant.models import OpenAIAssistant, OpenAIThread, TelegramUser
+from CoachAsistant.models import OpenAIAssistant, TelegramUser
 
 import asyncio
 from asgiref.sync import sync_to_async
@@ -32,10 +34,11 @@ from dotenv import load_dotenv
 import openai
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
 from aiogram import Router
 import re
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+from pydub import AudioSegment
 
 # Дальше идёт вся логика вашего бота
 load_dotenv()
@@ -61,16 +64,107 @@ async def cmd_start(message: types.Message):
         await sync_to_async(TelegramUser.objects.get)(chat_id=message.chat.id)
         await message.reply('Продолжим?')
     except:
-        await message.reply('Здравствуйте! Меня зовут AI Coach, и сегодня мы вместе займёмся исследованием ваших жизненных ценностей. Это важный и интересный процесс, который поможет вам лучше понять, что для вас действительно ценно и значимо. Начнем?')
+        await message.reply('Здравствуйте! Меня зовут AI Coach, и сегодня мы вместе займёмся исследованием ваших жизненных ценностей. Это важный и интересный процесс, который поможет вам лучше понять, что для вас действительно ценно и значимо. Начнем?\n Чтобы было удобнее вы можете записывать голосовые сообщения, я тоже буду отвечать голосом.')
 
 
 @dp.message(F.text, Command('clearall'))
-async def my_handler(message: Message):
-    # Синхронная функция clear_tread оборачивается
+async def my_handler(message: types.Message):
+
     thread = OpenAIThreadService()
     text = await sync_to_async(thread.clear_tread)(message.chat.id)
     await message.reply(f'{text}')
 
+@dp.message(F.voice)
+async def voice_handler(message: types.Message):
+    file_id = message.voice.file_id
+
+    # 1. Скачать оригинальный .ogg
+    file = await bot.get_file(file_id)
+    ogg_path = Path(f"files/{file_id}.ogg")
+    await bot.download_file(file.file_path, ogg_path)
+
+    # 2. Конвертировать .ogg → .mp3 (для распознавания)
+    mp3_path = ogg_path.with_suffix(".mp3")
+    AudioSegment.from_file(ogg_path, format="ogg") \
+                .export(mp3_path, format="mp3", bitrate="192k")
+
+    # 3. Распознавание речи (Whisper / GPT-4o-mini-transcribe)
+    with open(mp3_path, "rb") as audio_file:
+        transcription = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=audio_file
+        )
+    text = transcription.text
+
+    user_text = text
+    try:
+        # Синхронный вызов get_thread_by_user оборачиваем
+        user_service = TelegramUserService(chat_id=message.chat.id)
+        thread_obj = await sync_to_async(user_service.get_thread_by_user)()
+        thread_id = thread_obj.id if thread_obj else None
+
+        if thread_id:
+            thread_service = OpenAIThreadService(
+                thread_id=thread_id,
+                assistant_id=assistant.id
+            )
+            # Синхронный вызов add_message_tread оборачиваем
+            await sync_to_async(thread_service.add_message_tread)(user_text)
+        else:
+            thread_service = OpenAIThreadService(assistant_id=assistant.id)
+            await sync_to_async(thread_service.create_thread)(user_text, VECTOR_STORE_ID)
+            # Синхронный вызов create_thread оборачиваем
+            await sync_to_async(user_service.create_user)(assistant_id=thread_service.assistant_id,
+                                                          thread_id=thread_service.thread_id)
+
+        # Синхронный вызов run_tread оборачиваем
+        run = await sync_to_async(thread_service.run_tread)()
+
+        if run.status == 'completed':
+            # Синхронный вызов OpenAI API оборачиваем
+            messages_resp = await sync_to_async(
+                client.beta.threads.messages.list
+            )(thread_id=thread_service.thread_id)
+
+            answer = messages_resp.data[0].content[0].text.value
+            clear_answer = re.sub(r'【\d+:\d+†[^】]+】', '', answer)
+
+
+            # 4. Генерация TTS (GPT-4o-mini-tts) в .mp3
+            tts_mp3_path = Path(__file__).parent / f"files/transcription_{file_id}.mp3"
+            with client.audio.speech.with_streaming_response.create(
+                    model="gpt-4o-mini-tts",
+                    voice="coral",
+                    input=clear_answer,
+                    instructions="Отвечай спокойном тоне",
+            ) as response:
+                response.stream_to_file(tts_mp3_path)
+
+            # 5. Отправка результата пользователю
+            voice_file = FSInputFile(tts_mp3_path)
+            await message.answer_voice(voice_file)
+
+            # 6. Удаляем все временные файлы
+            try:
+                ogg_path.unlink()            # удалит files/{file_id}.ogg
+            except FileNotFoundError:
+                pass
+
+            try:
+                mp3_path.unlink()            # удалит files/{file_id}.mp3
+            except FileNotFoundError:
+                pass
+
+            try:
+                tts_mp3_path.unlink()        # удалит files/transcription_{file_id}.mp3
+            except FileNotFoundError:
+                pass
+        else:
+            await message.answer(f'Статус запроса: {run.status}')
+
+    except Exception as e:
+        error_text = f'Произошла ошибка при обработке запроса: {e}'
+        await message.answer(error_text)
 
 @dp.message()
 async def handle_message(message: types.Message):

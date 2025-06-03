@@ -1,4 +1,5 @@
 import os
+import json
 
 from .models import OpenAIThread, TelegramUser, OpenAIAssistant
 from .serializers import OpenAIAssistantSerializer, OpenAIThreadSerializer
@@ -10,20 +11,28 @@ from dotenv import load_dotenv
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOCS_PATH = os.path.join(BASE_DIR, "docs", "default_instructions.json")
 
 class OpenAIAssistantService:
     def create_assistant(self):
+
+        with open(DOCS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            instructions = data["instructions"]
+
         api_response = client.beta.assistants.create(
-            instructions="",
+            instructions=instructions,
             name="CoachAssistant",
-            model="gpt-4o-mini"
+            model="gpt-4o-mini",
+            top_p=1.0,
+            temperature=1.0
         )
 
         serializer = OpenAIAssistantSerializer(data=api_response.dict())
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return serializer
+        instance = serializer.save()
+        return instance
 
 class OpenAIThreadService:
     def __init__(self, assistant_id=None, thread_id=None):
@@ -41,9 +50,9 @@ class OpenAIThreadService:
             )
         serializer = OpenAIThreadSerializer(data=api_response.dict())
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        self.thread_id = serializer.data.get('id')
-        return serializer
+        instance = serializer.save()
+        self.thread_id = instance.id
+        return instance
 
 
     def  add_message_tread(self, user_text: str):

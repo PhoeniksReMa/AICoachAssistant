@@ -52,7 +52,10 @@ class OpenAIAssistantAdmin(admin.ModelAdmin):
         )
         obj.save()
     def delete_model(self, request, obj):
-        client.beta.assistants.delete(obj.id)
+        try:
+            client.beta.assistants.delete(obj.id)
+        except:
+            pass
         obj.delete()
 
 
