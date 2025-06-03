@@ -107,7 +107,6 @@ class TelegramUser(models.Model):
     """
     chat_id = models.IntegerField(
         primary_key=True,
-        max_length=100,
         help_text='Уникальный идентификатор чата в Telegram'
     )
     title = models.CharField(

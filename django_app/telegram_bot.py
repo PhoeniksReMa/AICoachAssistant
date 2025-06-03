@@ -89,7 +89,8 @@ async def voice_handler(message: types.Message):
 
     # 1. Скачать оригинальный .ogg
     file = await bot.get_file(file_id)
-    ogg_path = Path(f"files/{file_id}.ogg")
+
+    ogg_path = Path(__file__).parent / f"files/{file_id}.mp3"
     await bot.download_file(file.file_path, ogg_path)
 
     # 2. Конвертировать .ogg → .mp3 (для распознавания)
