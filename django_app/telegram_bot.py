@@ -85,6 +85,7 @@ async def my_handler(message: types.Message):
 
 @dp.message(F.voice)
 async def voice_handler(message: types.Message):
+    Path("files").mkdir(parents=True, exist_ok=True)
     file_id = message.voice.file_id
 
     # 1. Скачать оригинальный .ogg
