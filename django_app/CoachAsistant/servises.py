@@ -75,7 +75,7 @@ class OpenAIThreadService:
             user.thread.delete()
             return 'Ok'
         except Exception as e:
-            return str(e)
+            raise e
 
 
 class TelegramUserService:

@@ -4,6 +4,8 @@ import os
 import sys
 import django
 from pathlib import Path
+
+from aiogram.enums import ChatAction
 from aiogram.types import FSInputFile
 
 # 1) Добавляем в PYTHONPATH корень проекта (/home/Dev/AICoachAssistant),
@@ -32,11 +34,12 @@ import asyncio
 from asgiref.sync import sync_to_async
 from dotenv import load_dotenv
 import openai
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types, F, flags
 from aiogram.filters import CommandStart, Command
 from aiogram import Router
 import re
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.utils.chat_action import ChatActionMiddleware
 
 from pydub import AudioSegment
 
@@ -57,6 +60,8 @@ assistant = OpenAIAssistant.objects.first()
 if not assistant:
     assistant = OpenAIAssistantService().create_assistant()
 
+def register_middlewares(dp: Dispatcher) -> None:
+    dp.message.outer_middleware(ChatActionMiddleware())
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -64,15 +69,19 @@ async def cmd_start(message: types.Message):
         await sync_to_async(TelegramUser.objects.get)(chat_id=message.chat.id)
         await message.reply('Продолжим?')
     except:
-        await message.reply('Здравствуйте! Меня зовут AI Coach, и сегодня мы вместе займёмся исследованием ваших жизненных ценностей. Это важный и интересный процесс, который поможет вам лучше понять, что для вас действительно ценно и значимо. Начнем?\n Чтобы было удобнее вы можете записывать голосовые сообщения, я тоже буду отвечать голосом.')
+        await message.reply('Здравствуйте! Меня зовут AI Coach, и сегодня мы вместе займёмся исследованием ваших жизненных ценностей. Это важный и интересный процесс, который поможет вам лучше понять, что для вас действительно ценно и значимо. Начнем?\n\nЧтобы было удобнее вы можете записывать голосовые сообщения, я тоже буду отвечать голосом.')
 
 
 @dp.message(F.text, Command('clearall'))
 async def my_handler(message: types.Message):
+    try:
+        thread = OpenAIThreadService()
+        await sync_to_async(thread.clear_tread)(message.chat.id)
+        await message.reply('Здравствуйте! Меня зовут AI Coach, и сегодня мы вместе займёмся исследованием ваших жизненных ценностей. Это важный и интересный процесс, который поможет вам лучше понять, что для вас действительно ценно и значимо. Начнем?\n\nЧтобы было удобнее вы можете записывать голосовые сообщения, я тоже буду отвечать голосом.')
+    except Exception as e:
+        await message.reply(f'Мы не можем начать заново, потому что не были знакомы...  Меня зовут AI Coach, займёмся исследованием ваших жизненных ценностей?\n\nЧтобы было удобнее, вы можете записывать голосовые сообщения.')
 
-    thread = OpenAIThreadService()
-    text = await sync_to_async(thread.clear_tread)(message.chat.id)
-    await message.reply(f'{text}')
+
 
 @dp.message(F.voice)
 async def voice_handler(message: types.Message):
@@ -88,14 +97,14 @@ async def voice_handler(message: types.Message):
     AudioSegment.from_file(ogg_path, format="ogg") \
                 .export(mp3_path, format="mp3", bitrate="192k")
 
-    # 3. Распознавание речи (Whisper / GPT-4o-mini-transcribe)
+    # 3. Распознавание речи (GPT-4o-mini-transcribe)
     with open(mp3_path, "rb") as audio_file:
         transcription = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
             file=audio_file
         )
     text = transcription.text
-
+    await bot.send_chat_action(message.from_user.id, 'record_voice')
     user_text = text
     try:
         # Синхронный вызов get_thread_by_user оборачиваем
@@ -119,7 +128,7 @@ async def voice_handler(message: types.Message):
 
         # Синхронный вызов run_tread оборачиваем
         run = await sync_to_async(thread_service.run_tread)()
-
+        await bot.send_chat_action(message.from_user.id, 'record_voice')
         if run.status == 'completed':
             # Синхронный вызов OpenAI API оборачиваем
             messages_resp = await sync_to_async(
@@ -141,6 +150,7 @@ async def voice_handler(message: types.Message):
                 response.stream_to_file(tts_mp3_path)
 
             # 5. Отправка результата пользователю
+            await bot.send_chat_action(message.from_user.id, 'record_voice')
             voice_file = FSInputFile(tts_mp3_path)
             await message.answer_voice(voice_file)
 
@@ -168,6 +178,7 @@ async def voice_handler(message: types.Message):
 
 @dp.message()
 async def handle_message(message: types.Message):
+    await bot.send_chat_action(message.from_user.id, 'typing')
     user_text = message.text
     try:
         # Синхронный вызов get_thread_by_user оборачиваем
