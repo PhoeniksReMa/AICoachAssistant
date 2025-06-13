@@ -1,5 +1,3 @@
-# CoachAsistant/telegram_bot.py
-
 import os
 import sys
 import django

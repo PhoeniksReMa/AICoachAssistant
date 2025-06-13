@@ -1,5 +1,6 @@
 import os
 import json
+from .docs.variables import user_message_1, user_message_2, instructions
 
 from .models import OpenAIThread, TelegramUser, OpenAIAssistant
 from .serializers import OpenAIAssistantSerializer, OpenAIThreadSerializer
@@ -14,19 +15,16 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOCS_PATH = os.path.join(BASE_DIR, "docs", "default_instructions.json")
 
+
 class OpenAIAssistantService:
     def create_assistant(self):
-
-        with open(DOCS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            instructions = data["instructions"]
 
         api_response = client.beta.assistants.create(
             instructions=instructions,
             name="CoachAssistant",
             model="gpt-4o-mini",
-            top_p=1.0,
-            temperature=1.0
+            top_p=0.9,
+            temperature=0.7
         )
 
         serializer = OpenAIAssistantSerializer(data=api_response.dict())
@@ -41,13 +39,15 @@ class OpenAIThreadService:
 
     def create_thread(self, message_text: str, vector_store_id: list):
         api_response = client.beta.threads.create(
-                messages=[{"role": "user", "content": message_text}],
-                # tool_resources={
-                #     "file_search": {
-                #         "vector_store_ids": vector_store_id
-                #     }
-                # }
-            )
+            messages=[
+                {"role": "assistant", "content": 'Какими характеристиками должен обладать ChatGPT?'},
+                {"role": "user", "content": user_message_1},
+                {"role": "assistant", "content": 'Что-нибудь еще, что ChatGPT должен знать о вас?'},
+                {"role": "user", "content": user_message_2},
+                {"role": "assistant", "content": 'Здравствуйте! Меня зовут AI Coach, и сегодня мы вместе займёмся исследованием ваших жизненных ценностей. Это важный и интересный процесс, который поможет вам лучше понять, что для вас действительно ценно и значимо. Начнем?\n\nЧтобы было удобнее вы можете записывать голосовые сообщения, я тоже буду отвечать голосом.'},
+                {"role": "user", "content": message_text}
+            ]
+        )
         serializer = OpenAIThreadSerializer(data=api_response.dict())
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
